@@ -286,6 +286,12 @@ class QBOService:
                     return None
 
                 response.raise_for_status()
+
+                # Capture intuit_tid for Intuit support troubleshooting
+                intuit_tid = response.headers.get('intuit_tid')
+                if intuit_tid:
+                    logger.debug(f"intuit_tid: {intuit_tid}")
+
                 return response.json()
 
             except requests.exceptions.RequestException as e:
