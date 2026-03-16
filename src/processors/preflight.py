@@ -151,6 +151,92 @@ def run_preflight(
     return result, configs
 
 
+def run_preflight_from_configs(
+    qbo: QBOService,
+    sheets: SheetsService,
+    configs: List[Dict[str, Any]],
+) -> PreflightResult:
+    """
+    Run pre-flight checks using pre-loaded configs from MasterConfig.
+
+    Validates:
+    1. QBO API connection
+    2. Google Sheets authentication
+    3. Every destination sheet ID is accessible
+    4. Every destination tab exists
+    5. Template tabs exist for AR configs
+
+    Args:
+        qbo: Initialized QBOService
+        sheets: Initialized SheetsService
+        configs: Pre-loaded config dicts (from MasterConfig)
+
+    Returns:
+        PreflightResult
+    """
+    result = PreflightResult()
+
+    logger.info("Running pre-flight checks...")
+
+    # 1. QBO connection
+    qbo_ok = qbo.test_connection()
+    result.add("QBO API connection", qbo_ok,
+               "Token valid, company reachable" if qbo_ok else "Cannot reach QBO API")
+    if not qbo_ok:
+        return result
+
+    # 2. Google Sheets auth
+    sheets_ok = sheets.is_authenticated()
+    result.add("Google Sheets authentication", sheets_ok)
+    if not sheets_ok:
+        return result
+
+    result.add("Config loaded from MasterConfig", True,
+               f"{len(configs)} reports")
+
+    # 3 & 4. Validate destination sheets + tabs
+    sheets_to_check: Dict[str, List[str]] = {}
+    dynamic_tab_sheets: set = set()
+    for cfg in configs:
+        sid = cfg.get("dest_sheet_id", "")
+        tab = cfg.get("dest_tab_name", "")
+        if cfg.get("temp_tab"):
+            if sid:
+                dynamic_tab_sheets.add(sid)
+        elif sid:
+            sheets_to_check.setdefault(sid, [])
+            if tab and tab not in sheets_to_check[sid]:
+                sheets_to_check[sid].append(tab)
+
+    for sid in dynamic_tab_sheets:
+        if sid not in sheets_to_check:
+            sheets_to_check[sid] = []
+
+    for sheet_id, tabs_needed in sheets_to_check.items():
+        access_ok = sheets.verify_sheet_access(sheet_id)
+        result.add(f"Destination sheet accessible: {sheet_id[:20]}...", access_ok)
+
+        if access_ok and tabs_needed:
+            existing_tabs = _get_all_tabs(sheets, sheet_id)
+            for tab_name in tabs_needed:
+                tab_exists = tab_name in existing_tabs
+                result.add(f"  Tab exists: '{tab_name}'", tab_exists)
+
+    # 5. Check template tabs
+    for cfg in configs:
+        temp_tab = cfg.get("temp_tab", "")
+        if temp_tab:
+            dest_sid = cfg.get("dest_sheet_id", "")
+            if dest_sid:
+                existing_tabs = _get_all_tabs(sheets, dest_sid)
+                template_ok = temp_tab in existing_tabs
+                result.add(f"  Template tab exists: '{temp_tab}'", template_ok,
+                           f"in sheet {dest_sid[:20]}...")
+
+    logger.info(f"Pre-flight: {result.summary()}")
+    return result
+
+
 def _get_all_tabs(sheets: SheetsService, spreadsheet_id: str) -> set:
     """Get all tab names in a spreadsheet."""
     try:

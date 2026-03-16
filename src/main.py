@@ -17,7 +17,7 @@ from logger_setup import setup_logger, get_logger
 from services.qbo_service import QBOService
 from services.sheets_service import SheetsService
 from processors.report_processor import ReportProcessor
-from processors.preflight import run_preflight
+from processors.preflight import run_preflight, run_preflight_from_configs
 
 
 def run_setup() -> bool:
@@ -205,6 +205,8 @@ def process_client(client_name: str, settings: AppSettings,
     """
     Process reports for a single client using preflight + two-phase approach.
 
+    Report configs are read from MasterConfig (Reports_{client} tab).
+
     Args:
         client_name: Client name to process
         settings: Loaded app settings
@@ -226,17 +228,28 @@ def process_client(client_name: str, settings: AppSettings,
         logger.warning(f"Client {client_name} is disabled in MasterConfig")
         return 1
 
-    toprocess_sheet_id = sheet_override or client_config.toprocess_sheet_id
-    if not toprocess_sheet_id:
-        logger.error(f"No ToProcess sheet ID for {client_name}")
+    # Load report configs from MasterConfig
+    from settings import get_master_config
+    master = get_master_config()
+    master_sheet_id = master.sheet_id
+    reports_tab = f"Reports_{client_name}"
+
+    mc_reports = master.get_qbo_reports(client_name)
+    mc_year = master.get_qbo_report_year(client_name)
+
+    if not mc_reports:
+        logger.error(f"No report configs found in MasterConfig tab '{reports_tab}'")
+        return 1
+    if mc_year is None:
+        logger.error(f"No year found in MasterConfig tab '{reports_tab}' row 2")
         return 1
 
-    if sheet_override:
-        logger.info(f"Using sheet override: {sheet_override}")
+    # Convert MasterConfig reports to processor dict format
+    year_val, configs = SheetsService.configs_from_master(mc_reports, mc_year, master_sheet_id)
 
     logger.info(f"\n{'=' * 60}")
     logger.info(f"Client: {client_name}")
-    logger.info(f"ToProcess Sheet: {toprocess_sheet_id}")
+    logger.info(f"Config source: MasterConfig/{reports_tab} ({len(configs)} reports, year {year_val})")
     logger.info(f"{'=' * 60}")
 
     # Initialize Google Sheets service (always use BosOpt credentials for Sheets)
@@ -256,7 +269,7 @@ def process_client(client_name: str, settings: AppSettings,
         return 1
 
     # ── Pre-flight checks ──
-    preflight_result, configs = run_preflight(qbo, sheets, toprocess_sheet_id)
+    preflight_result = run_preflight_from_configs(qbo, sheets, configs)
 
     if not preflight_result.all_passed:
         logger.error("\nPre-flight checks FAILED:")
@@ -265,19 +278,13 @@ def process_client(client_name: str, settings: AppSettings,
         logger.error("\nAborting. Fix the issues above and try again.")
         return 1
 
-    # Retrieve year from configs (preflight already read it)
-    # Re-read just the year since preflight validated it exists
-    year_val, _ = sheets.read_toprocess_config(toprocess_sheet_id)
-    if year_val is None:
-        logger.error("Could not determine report year")
-        return 1
-
     # ── Two-phase processing ──
     processor = ReportProcessor(qbo, sheets)
     results = processor.process_all_reports(
-        toprocess_sheet_id,
+        master_sheet_id,
         configs=configs,
         year=year_val,
+        reports_tab=reports_tab,
     )
 
     # Print summary

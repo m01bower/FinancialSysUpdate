@@ -651,6 +651,7 @@ class QBOService:
         # P&L sections
         "Income": ["Income"],
         "CostOfGoodsSold": ["Cost of Goods Sold"],
+        "COGS": ["Cost of Goods Sold"],
         "Expenses": ["Expense"],
         "OtherIncome": ["Other Income"],
         "OtherExpenses": ["Other Expense"],
@@ -678,7 +679,7 @@ class QBOService:
             List of account dictionaries.
         """
         result = self._make_request("GET", "query", {
-            "query": "SELECT * FROM Account WHERE Active = true",
+            "query": "SELECT * FROM Account WHERE Active = true MAXRESULTS 1000",
             "minorversion": "75",
         })
         if not result or "QueryResponse" not in result:
@@ -938,7 +939,7 @@ class QBOService:
     def get_customers(self) -> List[Dict[str, Any]]:
         """Fetch all active customers."""
         result = self._make_request("GET", "query", {
-            "query": "SELECT * FROM Customer WHERE Active = true",
+            "query": "SELECT * FROM Customer WHERE Active = true MAXRESULTS 1000",
             "minorversion": "75",
         })
         if not result or "QueryResponse" not in result:
@@ -949,7 +950,7 @@ class QBOService:
     def get_items(self) -> List[Dict[str, Any]]:
         """Fetch all active products/services (items)."""
         result = self._make_request("GET", "query", {
-            "query": "SELECT * FROM Item WHERE Active = true",
+            "query": "SELECT * FROM Item WHERE Active = true MAXRESULTS 1000",
             "minorversion": "75",
         })
         if not result or "QueryResponse" not in result:

@@ -235,6 +235,43 @@ class SheetsService:
             logger.error(f"Failed to read ToProcess config: {e}")
             return None, []
 
+    @staticmethod
+    def configs_from_master(reports, year: int, master_sheet_id: str) -> Tuple[int, List[Dict[str, Any]]]:
+        """
+        Convert MasterConfig QBOReportConfig objects to the dict format
+        expected by ReportProcessor.
+
+        Args:
+            reports: List of QBOReportConfig from MasterConfig
+            year: Report year from MasterConfig
+            master_sheet_id: MasterConfig sheet ID (for processed date updates)
+
+        Returns:
+            Tuple of (year, list of config dicts)
+        """
+        configs = []
+        for idx, r in enumerate(reports):
+            if not r.qbo_report:
+                continue
+            config = {
+                "row_index": idx + 3,  # Row 1=headers, 2=year, 3+=data (1-indexed)
+                "row_max": r.row_max or "*",
+                "col_max": r.column_max or "*",
+                "dest_sheet_id": r.google_sheet_id,
+                "dest_tab_name": r.google_sheet_name,
+                "starting_cell": r.google_sheet_starting_cell or "A1",
+                "temp_tab": r.temp,
+                "new_tab_name_format": r.new_tab_name,
+                "qbo_report": r.qbo_report,
+                "report_display": r.report_display or "Monthly",
+                "date_range": r.date_range or "This Year",
+                "report_basis": r.report_basis or "Accrual",
+                "tab_index": r.move_new_tab_to_index or "",
+                "verify_last_row": r.verify_last_row.upper().startswith("Y") if r.verify_last_row else False,
+            }
+            configs.append(config)
+        return year, configs
+
     def read_autoprocess_config(
         self,
         spreadsheet_id: str,
@@ -563,21 +600,24 @@ class SheetsService:
         spreadsheet_id: str,
         row_index: int,
         processed_col: str = "K",
+        tab_name: str = None,
     ) -> bool:
         """
-        Update the processed date for a ToProcess row.
+        Update the processed date for a report config row.
 
         Args:
             spreadsheet_id: Google Sheet ID
-            row_index: Row number in ToProcess tab
+            row_index: Row number in the tab
             processed_col: Column for processed date
+            tab_name: Tab name (defaults to TOPROCESS_TAB_NAME)
 
         Returns:
             True if successful
         """
         try:
+            tab = tab_name or TOPROCESS_TAB_NAME
             timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
-            range_name = f"'{TOPROCESS_TAB_NAME}'!{processed_col}{row_index}"
+            range_name = f"'{tab}'!{processed_col}{row_index}"
 
             self.sheets.spreadsheets().values().update(
                 spreadsheetId=spreadsheet_id,
@@ -620,13 +660,12 @@ class SheetsService:
         starting_cell: str,
     ) -> int:
         """
-        Count the number of data rows currently in a tab starting from starting_cell.
-
-        Reads column A (or whatever column the starting_cell is in) and counts
-        non-empty rows from the starting row downward.
+        Count the total rows of data in a tab from starting_cell to the last
+        non-empty row. Includes blank separator rows in the count (financial
+        reports have section breaks).
 
         Returns:
-            Number of existing data rows (0 if empty or error)
+            Total row span from starting_cell to last non-empty row (0 if empty)
         """
         try:
             match = re.match(r"([A-Z]+)(\d+)", starting_cell.upper())
@@ -636,7 +675,7 @@ class SheetsService:
             col = match.group(1)
             start_row = int(match.group(2))
 
-            # Read the first column of data to count rows
+            # Read the first column of data
             range_name = f"'{tab_name}'!{col}{start_row}:{col}"
             result = self.sheets.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
@@ -644,20 +683,72 @@ class SheetsService:
             ).execute()
 
             values = result.get("values", [])
-            # Count rows that have any content
-            count = 0
-            for row in values:
-                if row and row[0] != "":
-                    count += 1
-                else:
-                    # Stop at first empty row
+            if not values:
+                return 0
+
+            # Find the last non-empty row (index from end)
+            last_non_empty = -1
+            for i in range(len(values) - 1, -1, -1):
+                if values[i] and values[i][0] != "":
+                    last_non_empty = i
                     break
 
-            return count
+            if last_non_empty < 0:
+                return 0
+
+            # Total row span = index of last non-empty row + 1
+            return last_non_empty + 1
 
         except HttpError as e:
             logger.error(f"Failed to count rows in {tab_name}: {e}")
             return 0
+
+    def find_label_row(
+        self,
+        spreadsheet_id: str,
+        tab_name: str,
+        starting_cell: str,
+        label: str,
+    ) -> Optional[int]:
+        """
+        Find which row a label appears on in the sheet.
+
+        Searches the starting column from starting_cell downward for an exact
+        match of `label`.
+
+        Args:
+            spreadsheet_id: Google Sheet ID
+            tab_name: Tab name
+            starting_cell: Cell reference (e.g. "A5", "B8")
+            label: The text to search for
+
+        Returns:
+            1-based row number where the label was found, or None
+        """
+        try:
+            match = re.match(r"([A-Z]+)(\d+)", starting_cell.upper())
+            if not match:
+                return None
+
+            col = match.group(1)
+            start_row = int(match.group(2))
+
+            range_name = f"'{tab_name}'!{col}{start_row}:{col}"
+            result = self.sheets.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=range_name,
+            ).execute()
+
+            values = result.get("values", [])
+            for i, row in enumerate(values):
+                if row and row[0].strip() == label.strip():
+                    return start_row + i
+
+            return None
+
+        except HttpError as e:
+            logger.error(f"Failed to search for label in {tab_name}: {e}")
+            return None
 
     def get_tab_sheet_id(
         self,

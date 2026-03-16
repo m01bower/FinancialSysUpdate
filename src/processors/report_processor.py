@@ -171,6 +171,7 @@ class ReportProcessor:
         self,
         downloaded: List[DownloadedReport],
         toprocess_sheet_id: str,
+        reports_tab: str = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Write all downloaded reports to Google Sheets.
@@ -178,6 +179,7 @@ class ReportProcessor:
         Args:
             downloaded: List of downloaded reports from phase 1
             toprocess_sheet_id: Sheet ID for updating processed dates
+            reports_tab: Tab name for processed date updates (MasterConfig)
 
         Returns:
             Dict mapping report keys to results
@@ -245,71 +247,75 @@ class ReportProcessor:
                     logger.info(f"  \u2713 {key}: 0 rows (empty report, nothing to write)")
                     continue
 
-                # ── Row stability check ──
-                # Compare new row count vs existing rows in the sheet.
-                # Include header row in the count for both sides.
-                new_total_rows = len(report.rows) + (1 if report.headers else 0)
+                # ── Row stability check (configurable per report) ──
+                # When verify_last_row is enabled:
+                # Find the last row label in QBO download, compare where it
+                # would land vs where it currently sits in the sheet.
+                #   BEFORE current position → ERROR (categories removed)
+                #   AFTER current position → NOTICE (new categories, append ok)
+                verify_last_row = config.get("verify_last_row", False)
                 is_new_tab = bool(temp_tab and new_tab_name_format)
 
-                if not is_new_tab:
-                    existing_rows = self.sheets.get_existing_row_count(
-                        dest_sheet_id, dest_tab_name, starting_cell,
-                    )
+                if verify_last_row and not is_new_tab:
+                    import re
+                    match = re.match(r"([A-Z]+)(\d+)", starting_cell.upper())
+                    start_row = int(match.group(2)) if match else 1
 
-                    if existing_rows > 0:
-                        if new_total_rows < existing_rows:
-                            # FEWER rows than expected — ERROR, do not write
-                            results[key] = {
-                                "status": "error",
-                                "rows": 0,
-                                "error": (
-                                    f"ROW MISMATCH: new data has {new_total_rows} rows "
-                                    f"but sheet has {existing_rows}. "
-                                    f"Missing {existing_rows - new_total_rows} rows. "
-                                    f"Skipped to protect sheet integrity."
-                                ),
-                            }
-                            logger.error(
-                                f"  \u2717 {key}: ROW MISMATCH — "
-                                f"new={new_total_rows}, existing={existing_rows}. "
-                                f"SKIPPED — check for deleted accounts."
-                            )
-                            continue
+                    # Get the last row label from QBO download
+                    last_qbo_label = None
+                    for row in reversed(report.rows):
+                        if row and str(row[0]).strip():
+                            last_qbo_label = str(row[0]).strip()
+                            break
 
-                        elif new_total_rows > existing_rows:
-                            # MORE rows — need to insert blank rows to shift formulas
-                            extra = new_total_rows - existing_rows
-                            logger.warning(
-                                f"  \u26a0 {key}: {extra} new row(s) detected "
-                                f"(existing={existing_rows}, new={new_total_rows})"
-                            )
+                    if last_qbo_label:
+                        # Where QBO would write this label
+                        header_offset = 1 if report.headers else 0
+                        new_last_row = start_row + header_offset + len(report.rows) - 1
 
-                            # Parse starting cell to get insertion point
-                            import re
-                            match = re.match(r"([A-Z]+)(\d+)", starting_cell.upper())
-                            if match:
-                                start_row = int(match.group(2))
-                                # Insert before the last existing row (0-based index)
-                                insert_at = start_row + existing_rows - 1
-                                if not self.sheets.insert_rows(
-                                    dest_sheet_id, dest_tab_name,
-                                    insert_at, extra,
-                                ):
-                                    results[key] = {
-                                        "status": "error",
-                                        "rows": 0,
-                                        "error": f"Failed to insert {extra} new rows",
-                                    }
-                                    logger.error(f"  \u2717 {key}: Failed to insert rows")
-                                    continue
+                        # Where it currently sits in the sheet
+                        existing_last_row = self.sheets.find_label_row(
+                            dest_sheet_id, dest_tab_name, starting_cell,
+                            last_qbo_label,
+                        )
 
-                            # Flag for post-write verification
-                            results[f"_row_change_{key}"] = {
-                                "status": "row_change",
-                                "rows_added": extra,
-                                "tab": dest_tab_name,
-                                "sheet_id": dest_sheet_id,
-                            }
+                        if existing_last_row is not None:
+                            if new_last_row < existing_last_row:
+                                # FEWER categories — ERROR, do not write
+                                missing = existing_last_row - new_last_row
+                                results[key] = {
+                                    "status": "error",
+                                    "rows": 0,
+                                    "error": (
+                                        f"ROW MISMATCH: '{last_qbo_label}' would land on "
+                                        f"row {new_last_row} but is currently on row "
+                                        f"{existing_last_row}. {missing} category row(s) "
+                                        f"missing. Skipped to protect sheet integrity."
+                                    ),
+                                }
+                                logger.error(
+                                    f"  \u2717 {key}: ROW MISMATCH — "
+                                    f"'{last_qbo_label}' new={new_last_row}, "
+                                    f"existing={existing_last_row}. "
+                                    f"SKIPPED — {missing} categories missing."
+                                )
+                                continue
+
+                            elif new_last_row > existing_last_row:
+                                # MORE categories — NOTICE, proceed (append)
+                                extra = new_last_row - existing_last_row
+                                logger.warning(
+                                    f"  \u26a0 {key}: {extra} new category row(s) — "
+                                    f"'{last_qbo_label}' moves from row "
+                                    f"{existing_last_row} to {new_last_row}"
+                                )
+
+                                results[f"_row_change_{key}"] = {
+                                    "status": "row_change",
+                                    "rows_added": extra,
+                                    "tab": dest_tab_name,
+                                    "sheet_id": dest_sheet_id,
+                                }
 
                 # Write data to destination (overwrite in place — do NOT clear,
                 # as other columns may contain formulas)
@@ -336,7 +342,9 @@ class ReportProcessor:
 
                 # Update processed date in ToProcess
                 if row_index > 0:
-                    self.sheets.update_processed_date(toprocess_sheet_id, row_index)
+                    self.sheets.update_processed_date(
+                        toprocess_sheet_id, row_index, tab_name=reports_tab,
+                    )
 
                 results[key] = {
                     "status": "success",
@@ -358,27 +366,23 @@ class ReportProcessor:
         toprocess_sheet_id: str,
         configs: Optional[List[Dict[str, Any]]] = None,
         year: Optional[int] = None,
+        reports_tab: str = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Process all reports using two-phase approach.
 
-        If configs/year are provided (from preflight), uses those directly.
-        Otherwise reads ToProcess config from the sheet.
-
         Args:
-            toprocess_sheet_id: Google Sheet ID containing ToProcess tab
-            configs: Pre-loaded configs from preflight (optional)
-            year: Pre-loaded year from preflight (optional)
+            toprocess_sheet_id: Google Sheet ID for processed date updates
+            configs: Pre-loaded configs (from MasterConfig or preflight)
+            year: Report year
+            reports_tab: Tab name for processed date updates (MasterConfig)
 
         Returns:
             Dict mapping report names to results
         """
-        # If not provided by preflight, read config now
         if configs is None or year is None:
-            year, configs = self.sheets.read_toprocess_config(toprocess_sheet_id)
-            if year is None:
-                logger.error("Failed to read ToProcess configuration")
-                return {"_error": {"status": "error", "error": "Failed to read configuration"}}
+            logger.error("configs and year are required")
+            return {"_error": {"status": "error", "error": "No configs provided"}}
 
         # Phase 1: Download
         downloaded, download_errors = self.download_all_reports(configs, year)
@@ -397,7 +401,9 @@ class ReportProcessor:
             )
 
         # Phase 2: Insert
-        results = self.insert_all_reports(downloaded, toprocess_sheet_id)
+        results = self.insert_all_reports(
+            downloaded, toprocess_sheet_id, reports_tab=reports_tab,
+        )
 
         # Add download errors to results
         for err in download_errors:
