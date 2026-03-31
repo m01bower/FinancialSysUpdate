@@ -216,7 +216,7 @@ class NotificationService:
         creds = None
         if token_path.exists():
             creds = Credentials.from_authorized_user_file(
-                str(token_path), GOOGLE_SCOPES,
+                str(token_path),
             )
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
