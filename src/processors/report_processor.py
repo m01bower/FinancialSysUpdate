@@ -237,12 +237,12 @@ class ReportProcessor:
 
                     dest_tab_name = actual_tab_name
 
-                    # Write report date to A1 (static text, not formula)
-                    report_date = date.today().strftime("%m/%d/%Y")
+                    # Write run timestamp to A1
+                    run_timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
                     self.sheets.write_cell(
-                        dest_sheet_id, dest_tab_name, "A1", report_date,
+                        dest_sheet_id, dest_tab_name, "A1", run_timestamp,
                     )
-                    logger.info(f"    Wrote report date {report_date} to A1")
+                    logger.info(f"    Wrote run timestamp {run_timestamp} to A1")
 
                     # Write today's date to the next empty row in ARDashboard C
                     # so the dashboard tracks when each AR snapshot was created.
@@ -339,6 +339,15 @@ class ReportProcessor:
                                     "tab": dest_tab_name,
                                     "sheet_id": dest_sheet_id,
                                 }
+
+                # Write run timestamp to A1 for non-template tabs so the
+                # sheet always shows when data was last refreshed.
+                # (Template tabs already get the timestamp above.)
+                if not is_new_tab:
+                    run_timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+                    self.sheets.write_cell(
+                        dest_sheet_id, dest_tab_name, "A1", run_timestamp,
+                    )
 
                 # Write data to destination (overwrite in place — do NOT clear,
                 # as other columns may contain formulas)

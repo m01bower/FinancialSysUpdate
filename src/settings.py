@@ -198,7 +198,7 @@ def load_settings() -> AppSettings:
     active_keys = master.get_active_clients("QBO", tool_feature="toprocess_active")
 
     for client_key in master.list_clients():
-        mc = master.get_client(client_key)
+        mc = master.get_client(client_key, tabs=["QBO", "Google Sheets"])
         # A client is "enabled" for this app if toprocess_active is set
         is_enabled = client_key in active_keys
 
