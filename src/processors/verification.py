@@ -328,8 +328,10 @@ class VerificationProcessor:
                 no_tab_count += 1
 
         if no_tab_count <= 5:
-            # Copy the very last row (its formulas will auto-increment)
-            source_row = len(rows) + 1  # 1-based sheet row (data starts row 2)
+            # Copy the last row that has a real value (not "No Tab") —
+            # that row has date formulas that auto-increment when copied.
+            # Do NOT copy "No Tab" rows as they have no formulas.
+            source_row = last_real_idx + 2  # 1-based sheet row (data starts row 2)
             ok = self._sheets.copy_row_down(ar_id, "ARDashboard", source_row, 90)
             if ok:
                 # Clear column A on all new rows so quarter markers from the
