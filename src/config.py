@@ -50,6 +50,7 @@ QBO_REPORTS = {
     "Sales by Customer Summary": "CustomerSales",
     "Sales by Product Summary": "ItemSales",
     "Sales by Product/Service Summary": "ItemSales",
+    "Sales by Product/Service Summary Report": "ItemSales",
 }
 
 # Report display options
