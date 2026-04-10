@@ -227,10 +227,8 @@ class ReportProcessor:
         logger.info(f"PHASE 1: Downloading {len(configs)} reports from QBO")
         logger.info(f"{'=' * 40}")
 
-        # Pre-fetch reference data for entity injection
+        # Pre-fetch Chart of Accounts for P&L/Balance Sheet injection
         coa_accounts = None
-        customers = None
-        items = None
 
         report_types_needed = {
             QBO_REPORTS.get(c.get("qbo_report", ""), "") for c in configs
@@ -240,16 +238,6 @@ class ReportProcessor:
             coa_accounts = self.qbo.get_accounts()
             if coa_accounts:
                 logger.info(f"Loaded {len(coa_accounts)} accounts from Chart of Accounts")
-
-        if report_types_needed & CUSTOMER_REPORT_TYPES:
-            customers = self.qbo.get_customers()
-            if customers:
-                logger.info(f"Loaded {len(customers)} customers")
-
-        if report_types_needed & ITEM_REPORT_TYPES:
-            items = self.qbo.get_items()
-            if items:
-                logger.info(f"Loaded {len(items)} products/services")
 
         for config in configs:
             report_name = config.get("qbo_report", "Unknown")
@@ -292,17 +280,13 @@ class ReportProcessor:
                     logger.error(f"  \u2717 {key}: Failed to fetch from QBO")
                     continue
 
-                # Inject zero-balance rows for missing accounts/customers/items
-                # Skip injection when filter is active (filtered reports
-                # intentionally exclude unmatched entities)
+                # Inject zero-balance rows for P&L and Balance Sheet only.
+                # Sales/Customer/Item reports should show active data only.
+                # Skip injection entirely when a filter is active.
                 qbo_endpoint = QBO_REPORTS.get(report_name, "")
-                if not row_filter:
-                    if coa_accounts and qbo_endpoint in COA_REPORT_TYPES:
+                if not row_filter and qbo_endpoint in COA_REPORT_TYPES:
+                    if coa_accounts:
                         self.qbo.inject_missing_accounts(report_data, coa_accounts)
-                    elif customers and qbo_endpoint in CUSTOMER_REPORT_TYPES:
-                        self.qbo.inject_missing_entities(report_data, customers, "DisplayName")
-                    elif items and qbo_endpoint in ITEM_REPORT_TYPES:
-                        self.qbo.inject_missing_entities(report_data, items, "Name")
 
                 rows, headers, row_depths = self.qbo.parse_report_to_rows(
                     report_data,
