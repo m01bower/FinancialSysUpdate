@@ -294,9 +294,9 @@ class ReportProcessor:
                     col_max=config.get("col_max", "*"),
                 )
 
-                # Remove zero-revenue rows and sort by total descending
-                # when a filter is active
-                if row_filter and rows:
+                # For non-P&L/Balance Sheet reports: remove zero-revenue
+                # rows and sort by total descending (active only, clean output)
+                if qbo_endpoint not in COA_REPORT_TYPES and rows:
                     rows, row_depths = _remove_zero_rows(rows, row_depths)
                     rows, row_depths = _sort_rows_by_total(rows, row_depths)
 
