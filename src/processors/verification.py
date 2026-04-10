@@ -119,6 +119,10 @@ class VerificationProcessor:
         # ── Write timestamps + ALL GOOD checks ──
         # All checks are conditional on the tab existing in the spreadsheet.
         # Not all clients have the same sheet structure.
+        # Wait for Google Sheets to recalculate formulas after data writes
+        import time
+        logger.info("Waiting 10s for sheet formulas to recalculate...")
+        time.sleep(10)
 
         pl_planning_tab = f"{self._year} P&L Planning"
         if self._sheets.get_tab_id(toprocess_id, pl_planning_tab) is not None:
