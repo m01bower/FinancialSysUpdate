@@ -394,19 +394,19 @@ class ReportProcessor:
 
                     # Write today's date to the next empty row in ARDashboard C
                     # so the dashboard tracks when each AR snapshot was created.
-                    # Find the row after the last one with a real tab (E is a
-                    # number, not "No Tab") — that's the next available slot.
-                    ar_data = self.sheets.read_range(
-                        dest_sheet_id, "ARDashboard", "C8:E",
+                    # Find the row with the max (newest) date in column C —
+                    # the next row after that is the slot to write to.
+                    ar_dates = self.sheets.read_range(
+                        dest_sheet_id, "ARDashboard", "C8:C",
                     )
-                    if ar_data:
-                        last_real_idx = -1
-                        for idx, row in enumerate(ar_data):
-                            col_e = row[2].strip() if len(row) > 2 else ""
-                            if col_e and col_e.upper() != "NO TAB":
-                                last_real_idx = idx
-                        # Next row after last real tab
-                        ar_row_num = 8 + last_real_idx + 1
+                    if ar_dates:
+                        last_date_idx = -1
+                        for idx, row in enumerate(ar_dates):
+                            val = row[0].strip() if row and row[0] else ""
+                            if val and val.upper() != "NO TAB":
+                                last_date_idx = idx
+                        # Next row after the last date
+                        ar_row_num = 8 + last_date_idx + 1
                         self.sheets.write_cell(
                             dest_sheet_id, "ARDashboard",
                             f"C{ar_row_num}", run_timestamp,
