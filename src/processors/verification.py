@@ -116,7 +116,7 @@ class VerificationProcessor:
         ar_id = self._config.ar_sheet_id
         total_cash_id = self._config.total_cash_sheet_id
 
-        # ── Write timestamps + ALL GOOD checks ──
+        # ── Phase 1: Write timestamps ──
         # All checks are conditional on the tab existing in the spreadsheet.
         # Not all clients have the same sheet structure.
         # Wait for Google Sheets to recalculate formulas after data writes
@@ -131,9 +131,6 @@ class VerificationProcessor:
                 pl_planning_tab, "C1", now_str,
                 "P&L Planning timestamp",
             )
-            self._check_all_good(result, toprocess_id, pl_planning_tab, "E1", "P&L Planning E1")
-            self._check_all_good(result, toprocess_id, pl_planning_tab, "I1", "P&L Planning I1")
-            self._check_all_good(result, toprocess_id, pl_planning_tab, "M1", "P&L Planning M1")
 
         if dashboard_id:
             dashboard_tab = f"{self._year} Financial Dashboard"
@@ -143,7 +140,6 @@ class VerificationProcessor:
                     dashboard_tab, "C3", now_str,
                     "Financial Dashboard timestamp",
                 )
-                self._check_all_good(result, dashboard_id, dashboard_tab, "D1", "Financial Dashboard D1")
 
         if ar_id:
             if self._sheets.get_tab_id(ar_id, "ARDashboard") is not None:
@@ -152,7 +148,6 @@ class VerificationProcessor:
                     "ARDashboard", "C1", now_str,
                     "AR Dashboard timestamp",
                 )
-                self._check_all_good(result, ar_id, "ARDashboard", "D1", "AR Dashboard D1")
 
         if total_cash_id:
             cash_tab = f"{self._year} Cash"
@@ -162,9 +157,24 @@ class VerificationProcessor:
                     cash_tab, "B1", now_str,
                     "Total Cash timestamp",
                 )
-                self._check_all_good(result, total_cash_id, cash_tab, "B2", "Total Cash B2")
 
-        # ── Total Cash: verify today's date in column A ──
+        # ── Yearly Analysis timestamps ──
+        if self._sheets.get_tab_id(toprocess_id, "Review") is not None:
+            self._write_timestamp(
+                result, toprocess_id,
+                "Review", "A1", now_str,
+                "Yearly Analysis Review timestamp",
+            )
+        if self._sheets.get_tab_id(toprocess_id, "Client Review") is not None:
+            self._write_timestamp(
+                result, toprocess_id,
+                "Client Review", "A1", now_str,
+                "Yearly Analysis Client Review timestamp",
+            )
+
+        # ── Phase 2: Non-formula checks (gives formulas more time to recalculate) ──
+
+        # Total Cash: verify today's date in column A
         if total_cash_id and self._sheets.get_tab_id(total_cash_id, f"{self._year} Cash") is not None:
             self._check_date_in_column(
                 result, total_cash_id,
@@ -172,7 +182,7 @@ class VerificationProcessor:
                 "Total Cash date in Col A",
             )
 
-        # ── AR Dashboard: verify today's date, auto-extend, quarter markers ──
+        # AR Dashboard: verify today's date, auto-extend, quarter markers
         if ar_id and self._sheets.get_tab_id(ar_id, "ARDashboard") is not None:
             self._check_date_in_column(
                 result, ar_id,
@@ -182,38 +192,62 @@ class VerificationProcessor:
             self._ar_auto_extend(result, ar_id)
             self._ar_quarter_markers(result, ar_id)
 
-        # ── Yearly Analysis: Review and Client Review tabs (same spreadsheet as ToProcess) ──
-        # Only run for tabs that exist — not all clients have these
-        if self._sheets.get_tab_id(toprocess_id, "Review") is not None:
-            self._write_timestamp(
-                result, toprocess_id,
-                "Review", "A1", now_str,
-                "Yearly Analysis Review timestamp",
-            )
-            self._check_all_good(
-                result, toprocess_id,
-                "Review", "D1",
-                "Yearly Analysis Review D1",
-            )
-        if self._sheets.get_tab_id(toprocess_id, "Client Review") is not None:
-            self._write_timestamp(
-                result, toprocess_id,
-                "Client Review", "A1", now_str,
-                "Yearly Analysis Client Review timestamp",
-            )
-            self._check_all_good(
-                result, toprocess_id,
-                "Client Review", "D1",
-                "Yearly Analysis Client Review D1",
-            )
-
-        # ── Row comparison: P&L Monthly vs Monthly Forecast ──
-        # Only run if both tabs exist in the spreadsheet
+        # Row comparison: P&L Monthly vs Monthly Forecast
         pl_tab = f"{self._year} P&L Monthly"
         fc_tab = f"{self._year} Monthly Forecast"
         if (self._sheets.get_tab_id(toprocess_id, pl_tab) is not None and
                 self._sheets.get_tab_id(toprocess_id, fc_tab) is not None):
             self._check_row_match(result, toprocess_id)
+
+        # ── Phase 3: ALL GOOD formula checks (with retry) ──
+        # Collect all ALL GOOD cells to check, then read them. If any fail,
+        # wait 10s more for formulas to finish and retry the failures once.
+        all_good_checks = []
+        if self._sheets.get_tab_id(toprocess_id, pl_planning_tab) is not None:
+            all_good_checks.append((toprocess_id, pl_planning_tab, "E1", "P&L Planning E1"))
+            all_good_checks.append((toprocess_id, pl_planning_tab, "I1", "P&L Planning I1"))
+            all_good_checks.append((toprocess_id, pl_planning_tab, "M1", "P&L Planning M1"))
+
+        if dashboard_id:
+            dashboard_tab = f"{self._year} Financial Dashboard"
+            if self._sheets.get_tab_id(dashboard_id, dashboard_tab) is not None:
+                all_good_checks.append((dashboard_id, dashboard_tab, "D1", "Financial Dashboard D1"))
+
+        if ar_id and self._sheets.get_tab_id(ar_id, "ARDashboard") is not None:
+            all_good_checks.append((ar_id, "ARDashboard", "D1", "AR Dashboard D1"))
+
+        if total_cash_id:
+            cash_tab = f"{self._year} Cash"
+            if self._sheets.get_tab_id(total_cash_id, cash_tab) is not None:
+                all_good_checks.append((total_cash_id, cash_tab, "B2", "Total Cash B2"))
+
+        if self._sheets.get_tab_id(toprocess_id, "Review") is not None:
+            all_good_checks.append((toprocess_id, "Review", "D1", "Yearly Analysis Review D1"))
+
+        if self._sheets.get_tab_id(toprocess_id, "Client Review") is not None:
+            all_good_checks.append((toprocess_id, "Client Review", "D1", "Yearly Analysis Client Review D1"))
+
+        # First pass
+        failed_checks = []
+        for sheet_id, tab, cell, name in all_good_checks:
+            value = self._sheets.read_cell(sheet_id, tab, cell)
+            if value is not None and value.strip().upper() == "ALL GOOD":
+                result.checks.append(VerificationCheck(name=name, passed=True, detail="ALL GOOD"))
+            else:
+                failed_checks.append((sheet_id, tab, cell, name, value))
+
+        # Retry pass — if any failed, wait 10s and try once more
+        if failed_checks:
+            logger.info(f"{len(failed_checks)} ALL GOOD check(s) failed, waiting 10s for formula recalculation and retrying...")
+            time.sleep(10)
+            for sheet_id, tab, cell, name, first_value in failed_checks:
+                value = self._sheets.read_cell(sheet_id, tab, cell)
+                passed = value is not None and value.strip().upper() == "ALL GOOD"
+                result.checks.append(VerificationCheck(
+                    name=name,
+                    passed=passed,
+                    detail="ALL GOOD (retry)" if passed else f"'{value}'",
+                ))
 
         return result
 
