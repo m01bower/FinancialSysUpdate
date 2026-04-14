@@ -174,12 +174,12 @@ class VerificationProcessor:
 
         # ── Phase 2: Non-formula checks (gives formulas more time to recalculate) ──
 
-        # Total Cash: verify today's date in column A
+        # Total Cash: verify today's date in column B
         if total_cash_id and self._sheets.get_tab_id(total_cash_id, f"{self._year} Cash") is not None:
             self._check_date_in_column(
                 result, total_cash_id,
-                f"{self._year} Cash", "A",
-                "Total Cash date in Col A",
+                f"{self._year} Cash", "B",
+                "Total Cash date in Col B",
             )
 
         # AR Dashboard: verify today's date, auto-extend, quarter markers
@@ -230,7 +230,9 @@ class VerificationProcessor:
         # First pass
         failed_checks = []
         for sheet_id, tab, cell, name in all_good_checks:
+            logger.info(f"ALL GOOD check: sheet={sheet_id}, tab='{tab}', cell={cell}")
             value = self._sheets.read_cell(sheet_id, tab, cell)
+            logger.info(f"  -> {name}: read value = {repr(value)}")
             if value is not None and value.strip().upper() == "ALL GOOD":
                 result.checks.append(VerificationCheck(name=name, passed=True, detail="ALL GOOD"))
             else:
