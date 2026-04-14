@@ -471,15 +471,19 @@ class QBOService:
             elif display.lower() == "total":
                 params["summarize_column_by"] = "Total"
         elif qbo_report in ["AgedReceivables", "AgedReceivablesSummary"]:
-            # AR reports use as_of date
+            # AR reports use report_date (as-of), not start/end dates
+            params.pop("start_date", None)
+            params.pop("end_date", None)
+            params.pop("date_macro", None)
             params["report_date"] = today.isoformat()
             # Column M = aging period in days (e.g. "7", "15", "30")
-            # Extract numeric value, default to 15
+            # Extract numeric value; if blank/non-numeric, omit to use QBO default
             period_match = re.search(r"\d+", display)
-            aging_days = int(period_match.group()) if period_match else 15
-            params["aging_period"] = str(aging_days)
-            # Scale num_periods to cover ~90 days regardless of period size
-            params["num_periods"] = str(max(4, min(12, 90 // aging_days)))
+            if period_match:
+                aging_days = int(period_match.group())
+                params["aging_period"] = str(aging_days)
+                # Scale num_periods to cover ~90 days regardless of period size
+                params["num_periods"] = str(max(4, min(12, 90 // aging_days)))
 
         # Accounting basis
         if basis.lower() in ["cash", "accrual"]:
