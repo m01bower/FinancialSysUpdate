@@ -565,7 +565,8 @@ class ReportProcessor:
                     dest_tab_name = actual_tab_name
 
                     # Write run timestamp to A1
-                    run_timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+                    from zoneinfo import ZoneInfo
+                    run_timestamp = datetime.now(ZoneInfo("America/New_York")).strftime("%m/%d/%Y %H:%M:%S")
                     self.sheets.write_cell(
                         dest_sheet_id, dest_tab_name, "A1", run_timestamp,
                     )
@@ -678,7 +679,8 @@ class ReportProcessor:
                 # sheet always shows when data was last refreshed.
                 # (Template tabs already get the timestamp above.)
                 if not is_new_tab:
-                    run_timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+                    from zoneinfo import ZoneInfo
+                    run_timestamp = datetime.now(ZoneInfo("America/New_York")).strftime("%m/%d/%Y %H:%M:%S")
                     self.sheets.write_cell(
                         dest_sheet_id, dest_tab_name, "A1", run_timestamp,
                     )

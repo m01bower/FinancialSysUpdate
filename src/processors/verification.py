@@ -14,6 +14,7 @@ Runs after all reports are uploaded. Two phases:
 
 from dataclasses import dataclass, field
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 from logger_setup import get_logger
@@ -110,7 +111,7 @@ class VerificationProcessor:
             return result
 
         # ── All reports passed — proceed with timestamps and checks ──
-        now_str = datetime.now().strftime("%m/%d/%Y %H:%M")
+        now_str = datetime.now(ZoneInfo("America/New_York")).strftime("%m/%d/%Y %H:%M")
         toprocess_id = self._config.toprocess_sheet_id
         dashboard_id = self._config.financial_dashboard_sheet_id
         ar_id = self._config.ar_sheet_id
