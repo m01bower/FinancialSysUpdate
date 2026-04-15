@@ -485,6 +485,11 @@ class QBOService:
                 # Scale num_periods to cover ~90 days regardless of period size
                 params["num_periods"] = str(max(4, min(12, 90 // aging_days)))
 
+        elif qbo_report == "GeneralLedger":
+            # Transaction List — uses GeneralLedger endpoint with custom columns
+            params["columns"] = "tx_date,txn_type,doc_num,name,memo,account_name,split_acc,subt_nat_amount,rbal_nat_amount"
+            params["sort_by"] = "TxnDate"
+
         # Accounting basis
         if basis.lower() in ["cash", "accrual"]:
             params["accounting_method"] = basis.capitalize()

@@ -24,47 +24,79 @@ CUSTOMER_REPORT_TYPES = {"CustomerSales"}
 ITEM_REPORT_TYPES = {"ItemSales"}
 
 
-def _resolve_item_filter(qbo: 'QBOService', filter_str: str) -> str:
-    """Resolve a filter expression to QBO item IDs.
+def _parse_filter(filter_str: str) -> dict:
+    """Parse a filter string into a structured dict.
 
-    Supported formats:
-        contains:text     — items whose name contains 'text'
-        exact:text        — items whose name exactly matches 'text'
+    Supports two formats:
+      JSON:  {"item": {"contains": "Executive"}, "account_type": ["Income"]}
+      Legacy: contains:Executive  (old format, converted to JSON equivalent)
+
+    Returns:
+        Dict with filter keys and values.
+    """
+    if not filter_str or not filter_str.strip():
+        return {}
+
+    stripped = filter_str.strip()
+
+    # Try JSON first
+    if stripped.startswith("{"):
+        try:
+            import json
+            return json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"Invalid JSON filter: {stripped}")
+            return {}
+
+    # Legacy format: "contains:text" or "exact:text"
+    if ":" in stripped:
+        mode, value = stripped.split(":", 1)
+        mode = mode.strip().lower()
+        value = value.strip()
+        if mode in ("contains", "exact") and value:
+            return {"item": {mode: value}}
+
+    logger.warning(f"Unrecognized filter format: {stripped}")
+    return {}
+
+
+def _resolve_item_filter(qbo: 'QBOService', item_filter: dict) -> str:
+    """Resolve an item filter to QBO item IDs.
+
+    Args:
+        item_filter: dict like {"contains": "Executive"} or ["Name1", "Name2"]
 
     Returns:
         Comma-separated item IDs for the QBO API, or empty string.
     """
-    if ":" not in filter_str:
-        logger.warning(f"Invalid filter format '{filter_str}' — expected 'contains:text'")
-        return ""
-
-    mode, value = filter_str.split(":", 1)
-    mode = mode.strip().lower()
-    value = value.strip()
-
-    if not value:
-        return ""
-
     items = qbo.get_items()
     if not items:
         logger.warning("No items returned from QBO for filter resolution")
         return ""
 
     matched = []
-    for item in items:
-        name = item.get("Name", "")
-        if mode == "contains" and value.lower() in name.lower():
-            matched.append(item)
-        elif mode == "exact" and name.lower() == value.lower():
-            matched.append(item)
+
+    if isinstance(item_filter, dict):
+        # {"contains": "text"} or {"exact": "text"}
+        for mode, value in item_filter.items():
+            for item in items:
+                name = item.get("Name", "")
+                if mode == "contains" and value.lower() in name.lower():
+                    matched.append(item)
+                elif mode == "exact" and name.lower() == value.lower():
+                    matched.append(item)
+    elif isinstance(item_filter, list):
+        # ["Name1", "Name2"] — exact match list
+        filter_names = {n.lower() for n in item_filter}
+        matched = [i for i in items if i.get("Name", "").lower() in filter_names]
 
     if matched:
         ids = ",".join(i["Id"] for i in matched)
         names = ", ".join(i["Name"] for i in matched)
-        logger.info(f"Filter '{filter_str}' matched {len(matched)} items: {names}")
+        logger.info(f"Item filter matched {len(matched)} items: {names}")
         return ids
 
-    logger.warning(f"Filter '{filter_str}' matched no items")
+    logger.warning(f"Item filter matched no items: {item_filter}")
     return ""
 
 
@@ -338,13 +370,30 @@ class ReportProcessor:
                 else:
                     dr = "Year"
 
-                # Resolve API-level item filter if configured
+                # Parse filter (JSON or legacy format)
                 row_filter = config.get("filter", "")
+                parsed_filter = _parse_filter(row_filter)
                 extra_params = {}
-                if row_filter:
-                    item_ids = _resolve_item_filter(self.qbo, row_filter)
-                    if item_ids:
-                        extra_params["item"] = item_ids
+                post_fetch_account_filter = []
+
+                if parsed_filter:
+                    # Item filter → resolves to QBO item IDs
+                    if "item" in parsed_filter:
+                        item_ids = _resolve_item_filter(self.qbo, parsed_filter["item"])
+                        if item_ids:
+                            extra_params["item"] = item_ids
+
+                    # Account type filter → QBO API-level parameter
+                    if "account_type" in parsed_filter:
+                        acct_types = parsed_filter["account_type"]
+                        if isinstance(acct_types, list):
+                            extra_params["account_type"] = ",".join(acct_types)
+
+                    # Account name filter → post-fetch filter (applied after download)
+                    if "account" in parsed_filter:
+                        acct_names = parsed_filter["account"]
+                        if isinstance(acct_names, list):
+                            post_fetch_account_filter = [n.lower().strip() for n in acct_names]
 
                 # Comparison reports need prior year sub-columns from QBO
                 is_comparison = "comparison" in report_name.lower()
@@ -373,7 +422,7 @@ class ReportProcessor:
                 # Sales/Customer/Item reports should show active data only.
                 # Skip injection entirely when a filter is active.
                 qbo_endpoint = QBO_REPORTS.get(report_name, "")
-                if not row_filter and qbo_endpoint in COA_REPORT_TYPES:
+                if not parsed_filter and qbo_endpoint in COA_REPORT_TYPES:
                     if coa_accounts:
                         self.qbo.inject_missing_accounts(report_data, coa_accounts)
 
@@ -400,6 +449,29 @@ class ReportProcessor:
                     sort_spec = "Name Asc"
                 if sort_spec and rows:
                     rows, row_depths = _sort_rows(rows, row_depths, sort_spec)
+
+                # Post-fetch account name filter (for Transaction List reports)
+                if post_fetch_account_filter and rows and headers:
+                    acct_col = None
+                    for idx, h in enumerate(headers):
+                        if h and h.lower() in ("account", "account name"):
+                            acct_col = idx
+                            break
+                    if acct_col is not None:
+                        before_count = len(rows)
+                        filtered = []
+                        filtered_depths = []
+                        for i, row in enumerate(rows):
+                            acct_val = str(row[acct_col]).lower().strip() if acct_col < len(row) else ""
+                            if any(f in acct_val for f in post_fetch_account_filter):
+                                filtered.append(row)
+                                if i < len(row_depths):
+                                    filtered_depths.append(row_depths[i])
+                        rows = filtered
+                        row_depths = filtered_depths
+                        logger.info(f"  Account filter: {before_count} → {len(rows)} rows")
+                    else:
+                        logger.warning(f"  Account filter: no 'Account' column found in headers")
 
                 report = DownloadedReport(config, rows, headers, year, row_depths)
                 downloaded.append(report)
