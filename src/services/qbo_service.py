@@ -487,7 +487,8 @@ class QBOService:
 
         elif qbo_report == "GeneralLedger":
             # Transaction List — uses GeneralLedger endpoint with custom columns
-            params["columns"] = "tx_date,txn_type,doc_num,name,memo,account_name,split_acc,subt_nat_amount,rbal_nat_amount"
+            # Account first, then Date-sorted transaction details
+            params["columns"] = "account_name,tx_date,txn_type,doc_num,name,memo,split_acc,subt_nat_amount,rbal_nat_amount"
             params["sort_by"] = "TxnDate"
 
         # Accounting basis
