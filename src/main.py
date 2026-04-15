@@ -2,6 +2,7 @@
 
 import sys
 import argparse
+from datetime import date
 from typing import Dict, List, Optional
 
 from settings import (
@@ -333,6 +334,23 @@ def process_client(client_name: str, settings: AppSettings,
     verifier = VerificationProcessor(sheets, verify_sheets_config, year_val)
     verification = verifier.run(results)
 
+    # Bank feed freshness check (FYI only — does not affect pass/fail)
+    bank_fyi = ""
+    primary_bank = mc_client.qbo.primary_bank_account if hasattr(mc_client.qbo, 'primary_bank_account') else ""
+    if primary_bank and qbo:
+        try:
+            last_txn = qbo.get_last_transaction_date(primary_bank)
+            if last_txn:
+                days_ago = (date.today() - last_txn).days
+                if days_ago > 1:
+                    bank_fyi = f"FYI — Primary account: last transaction was {days_ago} day(s) ago ({last_txn.isoformat()}). Bank feed may need attention."
+                    logger.info(bank_fyi)
+            else:
+                bank_fyi = "FYI — Primary account: no recent transactions found. Bank feed may need attention."
+                logger.info(bank_fyi)
+        except Exception as e:
+            logger.debug(f"Bank feed check skipped: {e}")
+
     # Print report summary to console
     print(f"\n{'=' * 60}")
     print(f"SUMMARY — {client_name}")
@@ -367,6 +385,10 @@ def process_client(client_name: str, settings: AppSettings,
     # Print verification summary
     for line in verification.summary_lines():
         print(line)
+
+    # Bank feed FYI (informational only)
+    if bank_fyi:
+        print(f"\n  {bank_fyi}")
 
     # Send verification failures as alerts
     for check in verification.checks:

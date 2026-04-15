@@ -694,6 +694,53 @@ class QBOService:
             accounts = [a for a in accounts if a.get("AccountType") in account_types]
         return accounts
 
+    def get_last_transaction_date(self, account_name: str) -> Optional[date]:
+        """Get the most recent transaction date for a bank account by name.
+
+        Queries the last Purchase or Deposit referencing this account.
+
+        Args:
+            account_name: Exact account name in QBO (e.g., "Business Checking")
+
+        Returns:
+            date of most recent transaction, or None if not found
+        """
+        # First find the account ID
+        accounts = self.get_accounts(include_inactive=False)
+        account_id = None
+        for a in accounts:
+            if a.get("Name", "").strip().lower() == account_name.strip().lower():
+                account_id = a.get("Id")
+                break
+
+        if not account_id:
+            logger.warning(f"Bank account not found: {account_name}")
+            return None
+
+        # Query the most recent transaction (Purchase or Deposit) for this account
+        # ORDER BY TxnDate DESC MAXRESULTS 1
+        for entity in ["Purchase", "Deposit"]:
+            query = (
+                f"SELECT TxnDate FROM {entity} "
+                f"WHERE AccountRef = '{account_id}' "
+                f"ORDER BY TxnDate DESC MAXRESULTS 1"
+            )
+            result = self._make_request("GET", "query", {
+                "query": query,
+                "minorversion": "75",
+            })
+            if result and "QueryResponse" in result:
+                rows = result["QueryResponse"].get(entity, [])
+                if rows:
+                    txn_date_str = rows[0].get("TxnDate", "")
+                    if txn_date_str:
+                        try:
+                            return date.fromisoformat(txn_date_str)
+                        except ValueError:
+                            pass
+
+        return None
+
     def inject_missing_accounts(
         self,
         report_data: Dict[str, Any],
