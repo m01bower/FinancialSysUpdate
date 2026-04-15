@@ -119,10 +119,10 @@ class VerificationProcessor:
         # ── Phase 1: Write timestamps ──
         # All checks are conditional on the tab existing in the spreadsheet.
         # Not all clients have the same sheet structure.
-        # Wait for Google Sheets to recalculate formulas after data writes
+        #
+        # Flush: write timestamps first — this triggers Google's recalc engine
+        # on the dependent formulas. Then wait for recalculation to complete.
         import time
-        logger.info("Waiting 10s for sheet formulas to recalculate...")
-        time.sleep(10)
 
         pl_planning_tab = f"{self._year} P&L Planning"
         if self._sheets.get_tab_id(toprocess_id, pl_planning_tab) is not None:
@@ -172,7 +172,12 @@ class VerificationProcessor:
                 "Yearly Analysis Client Review timestamp",
             )
 
-        # ── Phase 2: Non-formula checks (gives formulas more time to recalculate) ──
+        # ── Flush + wait: timestamps were just written, triggering formula recalc.
+        # Wait 20s to give Google Sheets time to process before reading ALL GOOD cells.
+        logger.info("Timestamps written — waiting 20s for formula recalculation...")
+        time.sleep(20)
+
+        # ── Phase 2: Non-formula checks (gives formulas even more time) ──
 
         # Total Cash: verify today's date in column B
         if total_cash_id and self._sheets.get_tab_id(total_cash_id, f"{self._year} Cash") is not None:
@@ -238,10 +243,10 @@ class VerificationProcessor:
             else:
                 failed_checks.append((sheet_id, tab, cell, name, value))
 
-        # Retry pass — if any failed, wait 10s and try once more
+        # Retry pass — if any failed, wait 15s and try once more
         if failed_checks:
-            logger.info(f"{len(failed_checks)} ALL GOOD check(s) failed, waiting 10s for formula recalculation and retrying...")
-            time.sleep(10)
+            logger.info(f"{len(failed_checks)} ALL GOOD check(s) failed, waiting 15s for formula recalculation and retrying...")
+            time.sleep(15)
             for sheet_id, tab, cell, name, first_value in failed_checks:
                 value = self._sheets.read_cell(sheet_id, tab, cell)
                 passed = value is not None and value.strip().upper() == "ALL GOOD"
