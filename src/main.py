@@ -306,11 +306,14 @@ def process_client(client_name: str, settings: AppSettings,
         reports_tab=reports_tab,
     )
 
-    # Send per-error alerts
+    # Send ONE alert with all report errors (not one per error)
     report_results = {k: v for k, v in results.items() if not k.startswith("_row_change_")}
-    for report, result in report_results.items():
-        if result.get("status") == "error":
-            notifier.send_alert(f"{report}: {result.get('error', 'Unknown error')}")
+    failed_reports = {k: v for k, v in report_results.items() if v.get("status") == "error"}
+    if failed_reports:
+        alert_lines = [f"  \u2717 {k}: {v.get('error', 'Unknown')}" for k, v in failed_reports.items()]
+        notifier.send_alert(
+            f"Reports: {len(failed_reports)} failed\n" + "\n".join(alert_lines)
+        )
 
     # ── Post-write verification ──
     # In test mode, swap verification sheet IDs to test copies so we can
@@ -390,12 +393,15 @@ def process_client(client_name: str, settings: AppSettings,
     if bank_fyi:
         print(f"\n  {bank_fyi}")
 
-    # Send verification failures as alerts
-    for check in verification.checks:
-        if not check.passed:
-            notifier.send_alert(f"Verification FAIL: {check.name} — {check.detail}")
+    # Send ONE alert with all verification failures (not one per failure)
+    failed_checks = [c for c in verification.checks if not c.passed]
+    if failed_checks:
+        alert_lines = [f"  \u2717 {c.name} — {c.detail}" for c in failed_checks]
+        notifier.send_alert(
+            f"Verification: {len(failed_checks)} check(s) failed\n" + "\n".join(alert_lines)
+        )
 
-    # Send notifications (include verification in summary)
+    # Send ONE summary notification
     verification_text = "\n".join(verification.summary_lines())
     notifier.send_summary(results, year_val, verification_text)
 
