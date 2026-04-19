@@ -741,6 +741,11 @@ class ReportProcessor:
                 }
                 logger.info(f"  \u2713 {key}: {rows_written} rows written")
 
+                # Pause between reports to let Google recalculate formulas
+                # and stay under API write quota
+                import time as _time
+                _time.sleep(3)
+
             except Exception as e:
                 results[key] = {"status": "error", "rows": 0, "error": str(e)}
                 logger.error(f"  \u2717 {key}: {e}")
